@@ -28,6 +28,9 @@ static void G_NotifyKillPost( gentity_t *attacker, gentity_t *victim, int meansO
 	if ( !attacker || !attacker->client || !victim || !victim->client ) {
 		return;
 	}
+	if ( attacker->r.svFlags & SVF_BOT ) {
+		return;
+	}
 
 	/*
 	 * qagame usually runs as QVM in this project; dispatch through a server
