@@ -200,6 +200,9 @@ static qboolean SV_KillPostHttpPost( const char *url, const char *body ) {
 			success = qfalse;
 		} else {
 			success = qtrue;
+			if ( sv_killpost_debug && sv_killpost_debug->integer ) {
+				Com_Printf( "q3js_killpost: posted event to %s (HTTP %ld)\n", url, statusCode );
+			}
 		}
 	}
 
@@ -257,6 +260,17 @@ static void SV_Q3JSKillPost_f( void ) {
 	victimClient = &svs.clients[victimClientNum];
 	if ( !killerClient->state || !victimClient->state ) {
 		return;
+	}
+
+	if ( sv_killpost_debug && sv_killpost_debug->integer ) {
+		Com_Printf(
+			"q3js_killpost: event killer=%d victim=%d mod=%d gameTime=%d map=%s\n",
+			killerClientNum,
+			victimClientNum,
+			meansOfDeath,
+			gameTime,
+			sv_mapname ? sv_mapname->string : ""
+		);
 	}
 
 	mapName = ( sv_mapname && sv_mapname->string ) ? sv_mapname->string : "";
