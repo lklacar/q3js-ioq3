@@ -38,6 +38,7 @@ These commands can only be entered from stdin or by a remote operator datagram
 static cvar_t *sv_killpost_url;
 static cvar_t *sv_killpost_debug;
 static int sv_killpost_lastErrorPrintTime;
+#define SV_KILLPOST_DEFAULT_URL "https://master.q3js.com/api/events"
 #ifdef USE_SERVER_CURL
 static qboolean sv_killpost_curlInitAttempted;
 static qboolean sv_killpost_curlReady;
@@ -45,10 +46,24 @@ static qboolean sv_killpost_curlReady;
 
 static void SV_KillPostInitCvars( void ) {
 	if ( !sv_killpost_url ) {
-		sv_killpost_url = Cvar_Get( "sv_killpost_url", "https://master.q3js.com/api/events", CVAR_ARCHIVE );
+		sv_killpost_url = Cvar_Get( "sv_killpost_url", SV_KILLPOST_DEFAULT_URL, CVAR_ARCHIVE );
 	}
 	if ( !sv_killpost_debug ) {
 		sv_killpost_debug = Cvar_Get( "sv_killpost_debug", "0", CVAR_ARCHIVE );
+	}
+
+	/*
+	 * Unquoted URLs passed via +set can be truncated at '//' by the cmd parser,
+	 * leaving values like "https:".
+	 */
+	if ( !Q_stricmp( sv_killpost_url->string, "https:" ) ||
+		 !Q_stricmp( sv_killpost_url->string, "http:" ) ) {
+		Com_Printf(
+			"q3js_killpost: sv_killpost_url value '%s' is truncated; resetting to %s\n",
+			sv_killpost_url->string,
+			SV_KILLPOST_DEFAULT_URL
+		);
+		Cvar_SetSafe( "sv_killpost_url", SV_KILLPOST_DEFAULT_URL );
 	}
 #ifdef USE_SERVER_CURL
 	if ( !sv_killpost_curlInitAttempted ) {
