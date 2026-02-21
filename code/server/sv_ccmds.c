@@ -21,6 +21,10 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 */
 
 #include "server.h"
+#ifdef USE_SERVER_CURL
+#	include <curl/curl.h>
+#endif
+
 
 /*
 ===============================================================================
@@ -30,6 +34,261 @@ OPERATOR CONSOLE ONLY COMMANDS
 These commands can only be entered from stdin or by a remote operator datagram
 ===============================================================================
 */
+
+static cvar_t *sv_killpost_url;
+static cvar_t *sv_killpost_debug;
+static int sv_killpost_lastErrorPrintTime;
+#ifdef USE_SERVER_CURL
+static qboolean sv_killpost_curlInitAttempted;
+static qboolean sv_killpost_curlReady;
+#endif
+
+static void SV_KillPostInitCvars( void ) {
+	if ( !sv_killpost_url ) {
+		sv_killpost_url = Cvar_Get( "sv_killpost_url", "https://master.q3js.com/api/events", CVAR_ARCHIVE );
+	}
+	if ( !sv_killpost_debug ) {
+		sv_killpost_debug = Cvar_Get( "sv_killpost_debug", "0", CVAR_ARCHIVE );
+	}
+#ifdef USE_SERVER_CURL
+	if ( !sv_killpost_curlInitAttempted ) {
+		CURLcode curlInitResult;
+
+		sv_killpost_curlInitAttempted = qtrue;
+		curlInitResult = curl_global_init( CURL_GLOBAL_DEFAULT );
+		if ( curlInitResult == CURLE_OK ) {
+			sv_killpost_curlReady = qtrue;
+		} else {
+			sv_killpost_curlReady = qfalse;
+			Com_Printf( "q3js_killpost: curl_global_init failed: %s\n", curl_easy_strerror( curlInitResult ) );
+		}
+	}
+#endif
+}
+
+static void QDECL SV_KillPostErrorf( const char *fmt, ... ) {
+	va_list argptr;
+	char text[1024];
+	qboolean throttle;
+
+	SV_KillPostInitCvars();
+
+	throttle = !sv_killpost_debug || !sv_killpost_debug->integer;
+	if ( throttle && svs.time - sv_killpost_lastErrorPrintTime < 5000 ) {
+		return;
+	}
+	sv_killpost_lastErrorPrintTime = svs.time;
+
+	va_start( argptr, fmt );
+	Q_vsnprintf( text, sizeof( text ), fmt, argptr );
+	va_end( argptr );
+
+	Com_Printf( "q3js_killpost: %s\n", text );
+}
+
+static void SV_KillPostJSONEscape( const char *input, char *output, size_t outputSize ) {
+	size_t outIndex;
+
+	if ( !outputSize ) {
+		return;
+	}
+
+	outIndex = 0;
+	while ( input[0] && outIndex + 1 < outputSize ) {
+		const char *escaped = NULL;
+		char unicode[7];
+		unsigned char c = (unsigned char)*input++;
+
+		switch ( c ) {
+		case '\"':
+			escaped = "\\\"";
+			break;
+		case '\\':
+			escaped = "\\\\";
+			break;
+		case '\b':
+			escaped = "\\b";
+			break;
+		case '\f':
+			escaped = "\\f";
+			break;
+		case '\n':
+			escaped = "\\n";
+			break;
+		case '\r':
+			escaped = "\\r";
+			break;
+		case '\t':
+			escaped = "\\t";
+			break;
+		default:
+			break;
+		}
+
+		if ( !escaped && c < 0x20 ) {
+			Com_sprintf( unicode, sizeof( unicode ), "\\u%04x", c );
+			escaped = unicode;
+		}
+
+		if ( escaped ) {
+			size_t i;
+
+			for ( i = 0; escaped[i] && outIndex + 1 < outputSize; i++ ) {
+				output[outIndex++] = escaped[i];
+			}
+		} else {
+			output[outIndex++] = (char)c;
+		}
+	}
+
+	output[outIndex] = '\0';
+}
+
+#ifdef USE_SERVER_CURL
+static size_t SV_KillPostDiscardResponse( char *ptr, size_t size, size_t nmemb, void *userdata ) {
+	(void)ptr;
+	(void)userdata;
+	return size * nmemb;
+}
+#endif
+
+static qboolean SV_KillPostHttpPost( const char *url, const char *body ) {
+#ifdef USE_SERVER_CURL
+	CURL *curl;
+	CURLcode curlResult;
+	struct curl_slist *headers;
+	long statusCode;
+	qboolean success;
+
+	if ( Q_stricmpn( url, "http://", 7 ) != 0 && Q_stricmpn( url, "https://", 8 ) != 0 ) {
+		SV_KillPostErrorf( "invalid URL '%s' (expected http:// or https://)", url );
+		return qfalse;
+	}
+
+	if ( !sv_killpost_curlReady ) {
+		SV_KillPostErrorf( "libcurl is not initialized" );
+		return qfalse;
+	}
+
+	curl = curl_easy_init();
+	if ( !curl ) {
+		SV_KillPostErrorf( "curl_easy_init failed" );
+		return qfalse;
+	}
+
+	headers = NULL;
+	headers = curl_slist_append( headers, "Content-Type: application/json" );
+
+	curl_easy_setopt( curl, CURLOPT_URL, url );
+	curl_easy_setopt( curl, CURLOPT_POST, 1L );
+	curl_easy_setopt( curl, CURLOPT_POSTFIELDS, body );
+	curl_easy_setopt( curl, CURLOPT_POSTFIELDSIZE, (long)strlen( body ) );
+	curl_easy_setopt( curl, CURLOPT_HTTPHEADER, headers );
+	curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, SV_KillPostDiscardResponse );
+	curl_easy_setopt( curl, CURLOPT_CONNECTTIMEOUT, 2L );
+	curl_easy_setopt( curl, CURLOPT_TIMEOUT, 4L );
+	curl_easy_setopt( curl, CURLOPT_NOSIGNAL, 1L );
+
+	curlResult = curl_easy_perform( curl );
+	if ( curlResult != CURLE_OK ) {
+		SV_KillPostErrorf( "request failed: %s", curl_easy_strerror( curlResult ) );
+		success = qfalse;
+	} else {
+		curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &statusCode );
+		if ( statusCode < 200 || statusCode >= 300 ) {
+			SV_KillPostErrorf( "HTTP status %ld from %s", statusCode, url );
+			success = qfalse;
+		} else {
+			success = qtrue;
+		}
+	}
+
+	curl_slist_free_all( headers );
+	curl_easy_cleanup( curl );
+
+	return success;
+#else
+	(void)url;
+	(void)body;
+	SV_KillPostErrorf( "libcurl support is not available in this build" );
+	return qfalse;
+#endif
+}
+
+static void SV_Q3JSKillPost_f( void ) {
+	int killerClientNum;
+	int victimClientNum;
+	int meansOfDeath;
+	int gameTime;
+	const char *mapName;
+	client_t *killerClient;
+	client_t *victimClient;
+	char killerNameEscaped[2 * MAX_NAME_LENGTH];
+	char victimNameEscaped[2 * MAX_NAME_LENGTH];
+	char mapNameEscaped[128];
+	char payload[2048];
+
+	if ( !com_sv_running->integer ) {
+		return;
+	}
+
+	SV_KillPostInitCvars();
+	if ( !sv_killpost_url->string[0] ) {
+		return;
+	}
+
+	if ( Cmd_Argc() < 5 ) {
+		return;
+	}
+
+	killerClientNum = atoi( Cmd_Argv( 1 ) );
+	victimClientNum = atoi( Cmd_Argv( 2 ) );
+	meansOfDeath = atoi( Cmd_Argv( 3 ) );
+	gameTime = atoi( Cmd_Argv( 4 ) );
+
+	if ( killerClientNum < 0 || killerClientNum >= sv_maxclients->integer ) {
+		return;
+	}
+	if ( victimClientNum < 0 || victimClientNum >= sv_maxclients->integer ) {
+		return;
+	}
+
+	killerClient = &svs.clients[killerClientNum];
+	victimClient = &svs.clients[victimClientNum];
+	if ( !killerClient->state || !victimClient->state ) {
+		return;
+	}
+
+	mapName = ( sv_mapname && sv_mapname->string ) ? sv_mapname->string : "";
+
+	SV_KillPostJSONEscape( killerClient->name, killerNameEscaped, sizeof( killerNameEscaped ) );
+	SV_KillPostJSONEscape( victimClient->name, victimNameEscaped, sizeof( victimNameEscaped ) );
+	SV_KillPostJSONEscape( mapName, mapNameEscaped, sizeof( mapNameEscaped ) );
+
+	Com_sprintf(
+		payload,
+		sizeof( payload ),
+		"{"
+		"\"event\":\"kill\","
+		"\"killer\":{\"clientNum\":%d,\"name\":\"%s\"},"
+		"\"victim\":{\"clientNum\":%d,\"name\":\"%s\"},"
+		"\"meansOfDeath\":%d,"
+		"\"gameTime\":%d,"
+		"\"serverTime\":%d,"
+		"\"map\":\"%s\""
+		"}",
+		killerClientNum,
+		killerNameEscaped,
+		victimClientNum,
+		victimNameEscaped,
+		meansOfDeath,
+		gameTime,
+		svs.time,
+		mapNameEscaped
+	);
+
+	SV_KillPostHttpPost( sv_killpost_url->string, payload );
+}
 
 
 /*
@@ -1521,6 +1780,7 @@ void SV_AddOperatorCommands( void ) {
 	initialized = qtrue;
 
 	Cmd_AddCommand ("heartbeat", SV_Heartbeat_f);
+	Cmd_AddCommand ("q3js_killpost", SV_Q3JSKillPost_f);
 	Cmd_AddCommand ("kick", SV_Kick_f);
 #ifndef STANDALONE
 	if(!com_standalone->integer)
@@ -1591,4 +1851,3 @@ void SV_RemoveOperatorCommands( void ) {
 	Cmd_RemoveCommand ("say");
 #endif
 }
-

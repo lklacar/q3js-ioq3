@@ -24,6 +24,26 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "g_local.h"
 
+static void G_NotifyKillPost( gentity_t *attacker, gentity_t *victim, int meansOfDeath ) {
+	if ( !attacker || !attacker->client || !victim || !victim->client ) {
+		return;
+	}
+
+	/*
+	 * qagame usually runs as QVM in this project; dispatch through a server
+	 * console command so the engine can perform the HTTP request.
+	 */
+	trap_SendConsoleCommand(
+		EXEC_APPEND,
+		va(
+			"q3js_killpost %d %d %d %d\n",
+			attacker->s.number,
+			victim->s.number,
+			meansOfDeath,
+			level.time
+		)
+	);
+}
 
 /*
 ============
@@ -509,6 +529,7 @@ void player_die( gentity_t *self, gentity_t *inflictor, gentity_t *attacker, int
 			AddScore( attacker, self->r.currentOrigin, -1 );
 		} else {
 			AddScore( attacker, self->r.currentOrigin, 1 );
+			G_NotifyKillPost( attacker, self, meansOfDeath );
 
 			if( meansOfDeath == MOD_GAUNTLET ) {
 				
