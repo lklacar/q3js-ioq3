@@ -7,8 +7,15 @@ endif()
 set(CMAKE_EXECUTABLE_SUFFIX ".js")
 set(CMAKE_SHARED_LIBRARY_SUFFIX ".wasm")
 
+# Dedicated server under emscripten is off by default; enable explicitly for node-based builds.
+option(EMSCRIPTEN_BUILD_SERVER "Build dedicated server for emscripten/node" OFF)
+if(EMSCRIPTEN_BUILD_SERVER)
+    set(BUILD_SERVER ON CACHE BOOL "" FORCE)
+else()
+    set(BUILD_SERVER OFF CACHE INTERNAL "")
+endif()
+
 # Disable options that don't make sense for emscripten
-set(BUILD_SERVER OFF CACHE INTERNAL "")
 set(BUILD_RENDERER_GL1 OFF CACHE INTERNAL "")
 set(USE_RENDERER_DLOPEN OFF CACHE INTERNAL "")
 set(USE_OPENAL_DLOPEN OFF CACHE INTERNAL "")

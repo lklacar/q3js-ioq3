@@ -1208,8 +1208,14 @@ void Sys_PlatformInit( void )
 
 	Sys_SetFloatEnv();
 
+#ifdef EMSCRIPTEN
+	/* emscripten/node does not provide poll/select semantics compatible with
+	 * this TTY path; always use nanosleep in Sys_Sleep instead. */
+	stdinIsATTY = qfalse;
+#else
 	stdinIsATTY = isatty( STDIN_FILENO ) &&
 		!( term && ( !strcmp( term, "raw" ) || !strcmp( term, "dumb" ) ) );
+#endif
 }
 
 /*
