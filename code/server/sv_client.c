@@ -145,6 +145,7 @@ void SV_GetChallenge(netadr_t from)
 	challenge->time = svs.time;
 
 #ifndef STANDALONE
+#ifndef __EMSCRIPTEN__
 	// Drop the authorize stuff if this client is coming in via v6 as the auth server does not support ipv6.
 	// Drop also for addresses coming in on local LAN and for stand-alone games independent from id's assets.
 	if(challenge->adr.type == NA_IP && !com_standalone->integer && !Sys_IsLANAddress(from))
@@ -194,6 +195,10 @@ void SV_GetChallenge(netadr_t from)
 			return;
 		}
 	}
+#else
+	// Emscripten builds use forced WebTransport; skip legacy id authorize UDP path.
+	(void)oldestClientTime;
+#endif
 #endif
 
 	challenge->pingTime = svs.time;

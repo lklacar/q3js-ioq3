@@ -47,7 +47,13 @@ to the new value before sending out any replies.
 */
 
 
+#ifdef __EMSCRIPTEN__
+// WebTransport/QUIC datagram payload limits are commonly lower than classic UDP MTU.
+// Keep packet payload conservative to avoid silent drops during gamestate transfer.
+#define	MAX_PACKETLEN			1152
+#else
 #define	MAX_PACKETLEN			1400		// max size of a network packet
+#endif
 
 #define	FRAGMENT_SIZE			(MAX_PACKETLEN - 100)
 #define	PACKET_HEADER			10			// two ints and a short

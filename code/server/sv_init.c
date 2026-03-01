@@ -684,7 +684,11 @@ void SV_Init (void)
 	sv_mapChecksum = Cvar_Get ("sv_mapChecksum", "", CVAR_ROM);
 	sv_lanForceRate = Cvar_Get ("sv_lanForceRate", "1", CVAR_ARCHIVE );
 #ifndef STANDALONE
+	#ifdef __EMSCRIPTEN__
+	sv_strictAuth = Cvar_Get ("sv_strictAuth", "0", CVAR_ARCHIVE );
+	#else
 	sv_strictAuth = Cvar_Get ("sv_strictAuth", "1", CVAR_ARCHIVE );
+	#endif
 #endif
 	sv_banFile = Cvar_Get("sv_banFile", "serverbans.dat", CVAR_ARCHIVE);
 
@@ -780,4 +784,3 @@ void SV_Shutdown( char *finalmsg ) {
 	if( sv_killserver->integer != 2 )
 		CL_Disconnect( qfalse );
 }
-
