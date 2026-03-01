@@ -1,3 +1,13 @@
+#ifdef GL_ES
+  #ifdef GL_FRAGMENT_PRECISION_HIGH
+    precision highp float;
+  #else
+    precision mediump float;
+  #endif
+  precision mediump int;
+#endif
+
+
 attribute vec3  attr_Position;
 attribute vec3  attr_Normal;
 attribute vec4  attr_TexCoord0;
