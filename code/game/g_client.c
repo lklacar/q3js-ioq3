@@ -27,7 +27,31 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 static vec3_t	playerMins = {-15, -15, -24};
 static vec3_t	playerMaxs = {15, 15, 32};
 
+static void G_EscapeConsoleArg( const char *input, char *output, size_t outputSize ) {
+	size_t outIndex;
+
+	if ( !outputSize ) {
+		return;
+	}
+
+	outIndex = 0;
+	while ( input && *input && outIndex + 1 < outputSize ) {
+		char c = *input++;
+
+		if ( c == '\"' || c == '\\' || c == '\n' || c == '\r' ) {
+			output[outIndex++] = '_';
+			continue;
+		}
+
+		output[outIndex++] = c;
+	}
+
+	output[outIndex] = '\0';
+}
+
 static void G_NotifyEventPost( gentity_t *ent, const char *eventName ) {
+	char escapedName[2 * MAX_NETNAME];
+
 	if ( !ent || !ent->client || !eventName || !eventName[0] ) {
 		return;
 	}
@@ -35,13 +59,16 @@ static void G_NotifyEventPost( gentity_t *ent, const char *eventName ) {
 		return;
 	}
 
+	G_EscapeConsoleArg( ent->client->pers.netname, escapedName, sizeof( escapedName ) );
+
 	trap_SendConsoleCommand(
 		EXEC_APPEND,
 		va(
-			"q3js_eventpost %s %d %d\n",
+			"q3js_eventpost %s %d %d \"%s\"\n",
 			eventName,
 			ent->s.number,
-			level.time
+			level.time,
+			escapedName
 		)
 	);
 }

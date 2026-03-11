@@ -248,6 +248,7 @@ static qboolean SV_Q3JSGetClient( int clientNum, client_t **clientOut ) {
 
 static void SV_Q3JSEventPost_f( void ) {
 	const char *eventName;
+	const char *playerName;
 	int clientNum;
 	int gameTime;
 	const char *mapName;
@@ -265,7 +266,7 @@ static void SV_Q3JSEventPost_f( void ) {
 		return;
 	}
 
-	if ( Cmd_Argc() < 4 ) {
+	if ( Cmd_Argc() < 5 ) {
 		return;
 	}
 
@@ -276,16 +277,23 @@ static void SV_Q3JSEventPost_f( void ) {
 
 	clientNum = atoi( Cmd_Argv( 2 ) );
 	gameTime = atoi( Cmd_Argv( 3 ) );
+	playerName = Cmd_Argv( 4 );
 
-	if ( !SV_Q3JSGetClient( clientNum, &client ) ) {
+	if ( clientNum < 0 || clientNum >= sv_maxclients->integer ) {
+		return;
+	}
+
+	client = &svs.clients[clientNum];
+	if ( ( !playerName || !playerName[0] ) && !client->state ) {
 		return;
 	}
 
 	if ( sv_killpost_debug && sv_killpost_debug->integer ) {
 		Com_Printf(
-			"q3js_killpost: event=%s player=%d gameTime=%d map=%s\n",
+			"q3js_killpost: event=%s player=%d name=%s gameTime=%d map=%s\n",
 			eventName,
 			clientNum,
+			( playerName && playerName[0] ) ? playerName : client->name,
 			gameTime,
 			sv_mapname ? sv_mapname->string : ""
 		);
@@ -293,7 +301,11 @@ static void SV_Q3JSEventPost_f( void ) {
 
 	mapName = ( sv_mapname && sv_mapname->string ) ? sv_mapname->string : "";
 
-	SV_KillPostJSONEscape( client->name, playerNameEscaped, sizeof( playerNameEscaped ) );
+	SV_KillPostJSONEscape(
+		( playerName && playerName[0] ) ? playerName : client->name,
+		playerNameEscaped,
+		sizeof( playerNameEscaped )
+	);
 	SV_KillPostJSONEscape( mapName, mapNameEscaped, sizeof( mapNameEscaped ) );
 
 	Com_sprintf(
