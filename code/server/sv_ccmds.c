@@ -233,6 +233,90 @@ static qboolean SV_KillPostHttpPost( const char *url, const char *body ) {
 #endif
 }
 
+static qboolean SV_Q3JSGetClient( int clientNum, client_t **clientOut ) {
+	if ( clientNum < 0 || clientNum >= sv_maxclients->integer ) {
+		return qfalse;
+	}
+
+	*clientOut = &svs.clients[clientNum];
+	if ( !( *clientOut )->state ) {
+		return qfalse;
+	}
+
+	return qtrue;
+}
+
+static void SV_Q3JSEventPost_f( void ) {
+	const char *eventName;
+	int clientNum;
+	int gameTime;
+	const char *mapName;
+	client_t *client;
+	char playerNameEscaped[2 * MAX_NAME_LENGTH];
+	char mapNameEscaped[128];
+	char payload[1024];
+
+	if ( !com_sv_running->integer ) {
+		return;
+	}
+
+	SV_KillPostInitCvars();
+	if ( !sv_killpost_url->string[0] ) {
+		return;
+	}
+
+	if ( Cmd_Argc() < 4 ) {
+		return;
+	}
+
+	eventName = Cmd_Argv( 1 );
+	if ( Q_stricmp( eventName, "join" ) != 0 && Q_stricmp( eventName, "leave" ) != 0 ) {
+		return;
+	}
+
+	clientNum = atoi( Cmd_Argv( 2 ) );
+	gameTime = atoi( Cmd_Argv( 3 ) );
+
+	if ( !SV_Q3JSGetClient( clientNum, &client ) ) {
+		return;
+	}
+
+	if ( sv_killpost_debug && sv_killpost_debug->integer ) {
+		Com_Printf(
+			"q3js_killpost: event=%s player=%d gameTime=%d map=%s\n",
+			eventName,
+			clientNum,
+			gameTime,
+			sv_mapname ? sv_mapname->string : ""
+		);
+	}
+
+	mapName = ( sv_mapname && sv_mapname->string ) ? sv_mapname->string : "";
+
+	SV_KillPostJSONEscape( client->name, playerNameEscaped, sizeof( playerNameEscaped ) );
+	SV_KillPostJSONEscape( mapName, mapNameEscaped, sizeof( mapNameEscaped ) );
+
+	Com_sprintf(
+		payload,
+		sizeof( payload ),
+		"{"
+		"\"event\":\"%s\","
+		"\"player\":{\"clientNum\":%d,\"name\":\"%s\"},"
+		"\"gameTime\":%d,"
+		"\"serverTime\":%d,"
+		"\"map\":\"%s\""
+		"}",
+		eventName,
+		clientNum,
+		playerNameEscaped,
+		gameTime,
+		svs.time,
+		mapNameEscaped
+	);
+
+	SV_KillPostHttpPost( sv_killpost_url->string, payload );
+}
+
 static void SV_Q3JSKillPost_f( void ) {
 	int killerClientNum;
 	int victimClientNum;
@@ -264,16 +348,10 @@ static void SV_Q3JSKillPost_f( void ) {
 	meansOfDeath = atoi( Cmd_Argv( 3 ) );
 	gameTime = atoi( Cmd_Argv( 4 ) );
 
-	if ( killerClientNum < 0 || killerClientNum >= sv_maxclients->integer ) {
+	if ( !SV_Q3JSGetClient( killerClientNum, &killerClient ) ) {
 		return;
 	}
-	if ( victimClientNum < 0 || victimClientNum >= sv_maxclients->integer ) {
-		return;
-	}
-
-	killerClient = &svs.clients[killerClientNum];
-	victimClient = &svs.clients[victimClientNum];
-	if ( !killerClient->state || !victimClient->state ) {
+	if ( !SV_Q3JSGetClient( victimClientNum, &victimClient ) ) {
 		return;
 	}
 
@@ -1809,6 +1887,7 @@ void SV_AddOperatorCommands( void ) {
 	initialized = qtrue;
 
 	Cmd_AddCommand ("heartbeat", SV_Heartbeat_f);
+	Cmd_AddCommand ("q3js_eventpost", SV_Q3JSEventPost_f);
 	Cmd_AddCommand ("q3js_killpost", SV_Q3JSKillPost_f);
 	Cmd_AddCommand ("kick", SV_Kick_f);
 #ifndef STANDALONE

@@ -27,6 +27,25 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 static vec3_t	playerMins = {-15, -15, -24};
 static vec3_t	playerMaxs = {15, 15, 32};
 
+static void G_NotifyEventPost( gentity_t *ent, const char *eventName ) {
+	if ( !ent || !ent->client || !eventName || !eventName[0] ) {
+		return;
+	}
+	if ( ent->r.svFlags & SVF_BOT ) {
+		return;
+	}
+
+	trap_SendConsoleCommand(
+		EXEC_APPEND,
+		va(
+			"q3js_eventpost %s %d %d\n",
+			eventName,
+			ent->s.number,
+			level.time
+		)
+	);
+}
+
 /*QUAKED info_player_deathmatch (1 0 1) (-16 -16 -24) (16 16 32) initial
 potential spawning position for deathmatch games.
 The first time a player enters the game, they will be at an 'initial' spot.
@@ -961,6 +980,7 @@ char *ClientConnect( int clientNum, qboolean firstTime, qboolean isBot ) {
 	// don't do the "xxx connected" messages if they were caried over from previous level
 	if ( firstTime ) {
 		trap_SendServerCommand( -1, va("print \"%s" S_COLOR_WHITE " connected\n\"", client->pers.netname) );
+		G_NotifyEventPost( ent, "join" );
 	}
 
 	if ( g_gametype.integer >= GT_TEAM &&
@@ -1297,6 +1317,7 @@ void ClientDisconnect( int clientNum ) {
 	}
 
 	G_LogPrintf( "ClientDisconnect: %i\n", clientNum );
+	G_NotifyEventPost( ent, "leave" );
 
 	// if we are playing in tourney mode and losing, give a win to the other player
 	if ( (g_gametype.integer == GT_TOURNAMENT )
@@ -1332,5 +1353,4 @@ void ClientDisconnect( int clientNum ) {
 		BotAIShutdownClient( clientNum, qfalse );
 	}
 }
-
 
