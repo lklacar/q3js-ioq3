@@ -980,7 +980,7 @@ char *ClientConnect( int clientNum, qboolean firstTime, qboolean isBot ) {
 	// don't do the "xxx connected" messages if they were caried over from previous level
 	if ( firstTime ) {
 		trap_SendServerCommand( -1, va("print \"%s" S_COLOR_WHITE " connected\n\"", client->pers.netname) );
-		G_NotifyEventPost( ent, "join" );
+		client->pers.pendingJoinEvent = qtrue;
 	}
 
 	if ( g_gametype.integer >= GT_TEAM &&
@@ -1045,6 +1045,10 @@ void ClientBegin( int clientNum ) {
 		if ( g_gametype.integer != GT_TOURNAMENT  ) {
 			trap_SendServerCommand( -1, va("print \"%s" S_COLOR_WHITE " entered the game\n\"", client->pers.netname) );
 		}
+	}
+	if ( client->pers.pendingJoinEvent ) {
+		client->pers.pendingJoinEvent = qfalse;
+		G_NotifyEventPost( ent, "join" );
 	}
 	G_LogPrintf( "ClientBegin: %i\n", clientNum );
 
@@ -1353,4 +1357,3 @@ void ClientDisconnect( int clientNum ) {
 		BotAIShutdownClient( clientNum, qfalse );
 	}
 }
-
