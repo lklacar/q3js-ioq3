@@ -1153,6 +1153,8 @@ void SV_Frame( int msec ) {
 		time_game = Sys_Milliseconds () - startTime;
 	}
 
+	SV_KillPostFrame();
+
 	// check timeouts
 	SV_CheckTimeouts();
 

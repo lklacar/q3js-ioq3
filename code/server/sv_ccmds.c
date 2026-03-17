@@ -39,9 +39,22 @@ static cvar_t *sv_killpost_url;
 static cvar_t *sv_killpost_debug;
 static int sv_killpost_lastErrorPrintTime;
 #define SV_KILLPOST_DEFAULT_URL "https://master.q3js.com/api/events"
+#define SV_KILLPOST_MAX_PENDING 128
 #ifdef USE_SERVER_CURL
 static qboolean sv_killpost_curlInitAttempted;
 static qboolean sv_killpost_curlReady;
+typedef struct svKillPostRequest_s {
+	struct svKillPostRequest_s *next;
+	CURL *curl;
+	struct curl_slist *headers;
+	char *url;
+	char *body;
+} svKillPostRequest_t;
+static CURLM *sv_killpost_multi;
+static svKillPostRequest_t *sv_killpost_pendingHead;
+static svKillPostRequest_t *sv_killpost_pendingTail;
+static svKillPostRequest_t *sv_killpost_activeRequest;
+static int sv_killpost_pendingCount;
 #endif
 
 static void SV_KillPostInitCvars( void ) {
@@ -165,66 +178,140 @@ static size_t SV_KillPostDiscardResponse( char *ptr, size_t size, size_t nmemb, 
 	(void)userdata;
 	return size * nmemb;
 }
-#endif
 
-static qboolean SV_KillPostHttpPost( const char *url, const char *body ) {
-#ifdef USE_SERVER_CURL
-	CURL *curl;
-	CURLcode curlResult;
-	struct curl_slist *headers;
-	long statusCode;
-	qboolean success;
+static void SV_KillPostFreeRequest( svKillPostRequest_t *request ) {
+	if ( !request ) {
+		return;
+	}
+
+	if ( request->headers ) {
+		curl_slist_free_all( request->headers );
+	}
+	if ( request->curl ) {
+		curl_easy_cleanup( request->curl );
+	}
+	if ( request->url ) {
+		Z_Free( request->url );
+	}
+	if ( request->body ) {
+		Z_Free( request->body );
+	}
+
+	Z_Free( request );
+}
+
+static void SV_KillPostCancelActiveRequest( void ) {
+	if ( !sv_killpost_activeRequest ) {
+		return;
+	}
+
+	if ( sv_killpost_multi && sv_killpost_activeRequest->curl ) {
+		curl_multi_remove_handle( sv_killpost_multi, sv_killpost_activeRequest->curl );
+	}
+
+	SV_KillPostFreeRequest( sv_killpost_activeRequest );
+	sv_killpost_activeRequest = NULL;
+}
+
+static qboolean SV_KillPostEnsureMulti( void ) {
+	if ( !sv_killpost_curlReady ) {
+		SV_KillPostErrorf( "libcurl is not initialized" );
+		return qfalse;
+	}
+
+	if ( !sv_killpost_multi ) {
+		sv_killpost_multi = curl_multi_init();
+		if ( !sv_killpost_multi ) {
+			SV_KillPostErrorf( "curl_multi_init failed" );
+			return qfalse;
+		}
+	}
+
+	return qtrue;
+}
+
+static qboolean SV_KillPostEnqueue( const char *url, const char *body ) {
+	svKillPostRequest_t *request;
 
 	if ( Q_stricmpn( url, "http://", 7 ) != 0 && Q_stricmpn( url, "https://", 8 ) != 0 ) {
 		SV_KillPostErrorf( "invalid URL '%s' (expected http:// or https://)", url );
 		return qfalse;
 	}
 
-	if ( !sv_killpost_curlReady ) {
-		SV_KillPostErrorf( "libcurl is not initialized" );
+	if ( !SV_KillPostEnsureMulti() ) {
 		return qfalse;
 	}
 
-	curl = curl_easy_init();
-	if ( !curl ) {
-		SV_KillPostErrorf( "curl_easy_init failed" );
+	if ( sv_killpost_pendingCount >= SV_KILLPOST_MAX_PENDING ) {
+		SV_KillPostErrorf( "dropping event because the async queue is full (%d)", SV_KILLPOST_MAX_PENDING );
 		return qfalse;
 	}
 
-	headers = NULL;
-	headers = curl_slist_append( headers, "Content-Type: application/json" );
+	request = Z_Malloc( sizeof( *request ) );
+	Com_Memset( request, 0, sizeof( *request ) );
+	request->url = CopyString( url );
+	request->body = CopyString( body );
 
-	curl_easy_setopt( curl, CURLOPT_URL, url );
-	curl_easy_setopt( curl, CURLOPT_POST, 1L );
-	curl_easy_setopt( curl, CURLOPT_POSTFIELDS, body );
-	curl_easy_setopt( curl, CURLOPT_POSTFIELDSIZE, (long)strlen( body ) );
-	curl_easy_setopt( curl, CURLOPT_HTTPHEADER, headers );
-	curl_easy_setopt( curl, CURLOPT_WRITEFUNCTION, SV_KillPostDiscardResponse );
-	curl_easy_setopt( curl, CURLOPT_CONNECTTIMEOUT, 2L );
-	curl_easy_setopt( curl, CURLOPT_TIMEOUT, 4L );
-	curl_easy_setopt( curl, CURLOPT_NOSIGNAL, 1L );
-
-	curlResult = curl_easy_perform( curl );
-	if ( curlResult != CURLE_OK ) {
-		SV_KillPostErrorf( "request failed: %s", curl_easy_strerror( curlResult ) );
-		success = qfalse;
+	if ( sv_killpost_pendingTail ) {
+		sv_killpost_pendingTail->next = request;
 	} else {
-		curl_easy_getinfo( curl, CURLINFO_RESPONSE_CODE, &statusCode );
-		if ( statusCode < 200 || statusCode >= 300 ) {
-			SV_KillPostErrorf( "HTTP status %ld from %s", statusCode, url );
-			success = qfalse;
-		} else {
-			success = qtrue;
-			if ( sv_killpost_debug && sv_killpost_debug->integer ) {
-				Com_Printf( "q3js_killpost: posted event to %s (HTTP %ld)\n", url, statusCode );
-			}
-		}
+		sv_killpost_pendingHead = request;
+	}
+	sv_killpost_pendingTail = request;
+	sv_killpost_pendingCount++;
+
+	return qtrue;
+}
+
+static void SV_KillPostStartNextRequest( void ) {
+	svKillPostRequest_t *request;
+	CURLMcode multiResult;
+
+	if ( sv_killpost_activeRequest || !sv_killpost_pendingHead ) {
+		return;
 	}
 
-	curl_slist_free_all( headers );
-	curl_easy_cleanup( curl );
+	request = sv_killpost_pendingHead;
+	sv_killpost_pendingHead = request->next;
+	if ( !sv_killpost_pendingHead ) {
+		sv_killpost_pendingTail = NULL;
+	}
+	request->next = NULL;
+	sv_killpost_pendingCount--;
 
-	return success;
+	request->curl = curl_easy_init();
+	if ( !request->curl ) {
+		SV_KillPostErrorf( "curl_easy_init failed" );
+		SV_KillPostFreeRequest( request );
+		return;
+	}
+
+	request->headers = curl_slist_append( request->headers, "Content-Type: application/json" );
+	curl_easy_setopt( request->curl, CURLOPT_URL, request->url );
+	curl_easy_setopt( request->curl, CURLOPT_POST, 1L );
+	curl_easy_setopt( request->curl, CURLOPT_POSTFIELDS, request->body );
+	curl_easy_setopt( request->curl, CURLOPT_POSTFIELDSIZE, (long)strlen( request->body ) );
+	curl_easy_setopt( request->curl, CURLOPT_HTTPHEADER, request->headers );
+	curl_easy_setopt( request->curl, CURLOPT_WRITEFUNCTION, SV_KillPostDiscardResponse );
+	curl_easy_setopt( request->curl, CURLOPT_CONNECTTIMEOUT, 2L );
+	curl_easy_setopt( request->curl, CURLOPT_TIMEOUT, 4L );
+	curl_easy_setopt( request->curl, CURLOPT_NOSIGNAL, 1L );
+	curl_easy_setopt( request->curl, CURLOPT_PRIVATE, request );
+
+	multiResult = curl_multi_add_handle( sv_killpost_multi, request->curl );
+	if ( multiResult != CURLM_OK ) {
+		SV_KillPostErrorf( "curl_multi_add_handle failed: %s", curl_multi_strerror( multiResult ) );
+		SV_KillPostFreeRequest( request );
+		return;
+	}
+
+	sv_killpost_activeRequest = request;
+}
+#endif
+
+static qboolean SV_KillPostHttpPost( const char *url, const char *body ) {
+#ifdef USE_SERVER_CURL
+	return SV_KillPostEnqueue( url, body );
 #else
 	(void)url;
 	(void)body;
@@ -407,6 +494,95 @@ static void SV_Q3JSKillPost_f( void ) {
 	);
 
 	SV_KillPostHttpPost( sv_killpost_url->string, payload );
+}
+
+void SV_KillPostFrame( void ) {
+#ifdef USE_SERVER_CURL
+	int stillRunning;
+	CURLMcode multiResult;
+	CURLMsg *message;
+	int messagesInQueue;
+
+	SV_KillPostInitCvars();
+
+	if ( !sv_killpost_multi ) {
+		if ( sv_killpost_pendingHead ) {
+			SV_KillPostStartNextRequest();
+		} else {
+			return;
+		}
+	}
+
+	if ( !sv_killpost_multi ) {
+		return;
+	}
+
+	SV_KillPostStartNextRequest();
+
+	stillRunning = 0;
+	multiResult = curl_multi_perform( sv_killpost_multi, &stillRunning );
+	if ( multiResult != CURLM_OK ) {
+		SV_KillPostErrorf( "curl_multi_perform failed: %s", curl_multi_strerror( multiResult ) );
+		SV_KillPostCancelActiveRequest();
+		return;
+	}
+
+	while ( ( message = curl_multi_info_read( sv_killpost_multi, &messagesInQueue ) ) != NULL ) {
+		svKillPostRequest_t *request;
+		long statusCode;
+
+		if ( message->msg != CURLMSG_DONE ) {
+			continue;
+		}
+
+		request = NULL;
+		statusCode = 0;
+		curl_easy_getinfo( message->easy_handle, CURLINFO_PRIVATE, &request );
+		curl_easy_getinfo( message->easy_handle, CURLINFO_RESPONSE_CODE, &statusCode );
+		curl_multi_remove_handle( sv_killpost_multi, message->easy_handle );
+
+		if ( message->data.result != CURLE_OK ) {
+			SV_KillPostErrorf( "request failed: %s", curl_easy_strerror( message->data.result ) );
+		} else if ( statusCode < 200 || statusCode >= 300 ) {
+			SV_KillPostErrorf( "HTTP status %ld from %s", statusCode, request ? request->url : "killpost endpoint" );
+		} else if ( sv_killpost_debug && sv_killpost_debug->integer && request ) {
+			Com_Printf( "q3js_killpost: posted event to %s (HTTP %ld)\n", request->url, statusCode );
+		}
+
+		if ( request == sv_killpost_activeRequest ) {
+			sv_killpost_activeRequest = NULL;
+		}
+		SV_KillPostFreeRequest( request );
+	}
+
+	SV_KillPostStartNextRequest();
+#else
+#endif
+}
+
+void SV_KillPostShutdown( void ) {
+#ifdef USE_SERVER_CURL
+	svKillPostRequest_t *request;
+
+	SV_KillPostCancelActiveRequest();
+
+	request = sv_killpost_pendingHead;
+	while ( request ) {
+		svKillPostRequest_t *next = request->next;
+		SV_KillPostFreeRequest( request );
+		request = next;
+	}
+
+	sv_killpost_pendingHead = NULL;
+	sv_killpost_pendingTail = NULL;
+	sv_killpost_pendingCount = 0;
+
+	if ( sv_killpost_multi ) {
+		curl_multi_cleanup( sv_killpost_multi );
+		sv_killpost_multi = NULL;
+	}
+#else
+#endif
 }
 
 

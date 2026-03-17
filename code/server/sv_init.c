@@ -754,6 +754,7 @@ void SV_Shutdown( char *finalmsg ) {
 
 	SV_RemoveOperatorCommands();
 	SV_MasterShutdown();
+	SV_KillPostShutdown();
 	SV_ShutdownGameProgs();
 
 	// free current level
@@ -780,4 +781,3 @@ void SV_Shutdown( char *finalmsg ) {
 	if( sv_killserver->integer != 2 )
 		CL_Disconnect( qfalse );
 }
-

@@ -390,6 +390,8 @@ int SV_SendQueuedMessages(void);
 // sv_ccmds.c
 //
 void SV_Heartbeat_f( void );
+void SV_KillPostFrame( void );
+void SV_KillPostShutdown( void );
 
 //
 // sv_snapshot.c
