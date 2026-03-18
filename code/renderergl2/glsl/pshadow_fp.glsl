@@ -1,3 +1,13 @@
+#ifdef GL_ES
+  #ifdef GL_FRAGMENT_PRECISION_HIGH
+    precision highp float;
+  #else
+    precision mediump float;
+  #endif
+  precision mediump int;
+#endif
+
+
 uniform sampler2D u_ShadowMap;
 
 uniform vec3      u_LightForward;
