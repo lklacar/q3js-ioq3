@@ -151,6 +151,11 @@ For Emscripten,
   6. Debugging the C code is possible using a Chrome extension. For details
      see https://developer.chrome.com/blog/wasm-debugging-2020
 
+The dedicated server can also be built with Emscripten. The `ioq3ded` target
+is emitted as a Node.js JavaScript + WebAssembly pair and uses Emscripten's
+WebSocket-backed socket layer by default. At runtime Node must be able to
+resolve the `ws` package.
+
 Installation, for *nix
   1. Set the CMAKE_INSTALL_PREFIX to your prefered installation directory.
      By default it will be set to /opt/quake3/.
@@ -638,5 +643,4 @@ Significant contributions from
   * optical <alex@rigbo.se>
   * Aaron Gyes <floam@aaron.gy>
   * surrealchemist
-
 

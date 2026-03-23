@@ -15,7 +15,12 @@ function(add_git_dependency SOURCE_FILE)
         endif()
 
         string(STRIP ${CMAKE_MATCH_1} GIT_DIR)
+        if(NOT IS_ABSOLUTE ${GIT_DIR})
+            get_filename_component(GIT_DIR ${GIT_DIR} ABSOLUTE BASE_DIR ${CMAKE_SOURCE_DIR})
+        endif()
     endif()
+
+    get_filename_component(GIT_DIR ${GIT_DIR} ABSOLUTE)
 
     set(GIT_FILES)
     list(APPEND GIT_FILES ${GIT_DIR}/HEAD)
