@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "../qcommon/q_shared.h"
 #include "../qcommon/qcommon.h"
+#include "../qcommon/net_wt.h"
 
 #ifdef _WIN32
 #	include <winsock2.h>
@@ -366,6 +367,10 @@ Sys_StringToAdr
 qboolean Sys_StringToAdr( const char *s, netadr_t *a, netadrtype_t family ) {
 	struct sockaddr_storage sadr;
 	sa_family_t fam;
+
+	if( NET_WT_StringToAdr( s, a, family ) ) {
+		return qtrue;
+	}
 	
 	switch(family)
 	{
@@ -404,6 +409,9 @@ qboolean NET_CompareBaseAdrMask(netadr_t a, netadr_t b, int netmask)
 
 	if (a.type == NA_LOOPBACK)
 		return qtrue;
+
+	if( a.type == NA_WEBTRANSPORT )
+		return NET_WT_CompareBaseAdrMask( a, b, netmask );
 
 	if(a.type == NA_IP)
 	{
@@ -468,6 +476,8 @@ const char	*NET_AdrToString (netadr_t a)
 		Com_sprintf (s, sizeof(s), "loopback");
 	else if (a.type == NA_BOT)
 		Com_sprintf (s, sizeof(s), "bot");
+	else if (a.type == NA_WEBTRANSPORT)
+		Q_strncpyz( s, NET_WT_AdrToString( a ), sizeof( s ) );
 	else if (a.type == NA_IP || a.type == NA_IP6)
 	{
 		struct sockaddr_storage sadr;
@@ -488,6 +498,8 @@ const char	*NET_AdrToStringwPort (netadr_t a)
 		Com_sprintf (s, sizeof(s), "loopback");
 	else if (a.type == NA_BOT)
 		Com_sprintf (s, sizeof(s), "bot");
+	else if(a.type == NA_WEBTRANSPORT)
+		Q_strncpyz( s, NET_WT_AdrToStringwPort( a ), sizeof( s ) );
 	else if(a.type == NA_IP)
 		Com_sprintf(s, sizeof(s), "%s:%hu", NET_AdrToString(a), ntohs(a.port));
 	else if(a.type == NA_IP6)
@@ -502,6 +514,9 @@ qboolean	NET_CompareAdr (netadr_t a, netadr_t b)
 	if(!NET_CompareBaseAdr(a, b))
 		return qfalse;
 	
+	if( a.type == NA_WEBTRANSPORT )
+		return NET_WT_CompareAdr( a, b );
+
 	if (a.type == NA_IP || a.type == NA_IP6)
 	{
 		if (a.port == b.port)
@@ -515,6 +530,9 @@ qboolean	NET_CompareAdr (netadr_t a, netadr_t b)
 
 
 qboolean	NET_IsLocalAddress( netadr_t adr ) {
+	if( adr.type == NA_WEBTRANSPORT )
+		return NET_WT_IsLocalAddress( adr );
+
 	return adr.type == NA_LOOPBACK;
 }
 
@@ -533,6 +551,9 @@ qboolean NET_GetPacket(netadr_t *net_from, msg_t *net_message, fd_set *fdr)
 	struct sockaddr_storage from;
 	socklen_t	fromlen;
 	int		err;
+
+	if( NET_UseWebTransport() )
+		return NET_WT_GetPacket( net_from, net_message );
 	
 	if(ip_socket != INVALID_SOCKET && FD_ISSET(ip_socket, fdr))
 	{
@@ -651,6 +672,12 @@ void Sys_SendPacket( int length, const void *data, netadr_t to ) {
 	int				ret = SOCKET_ERROR;
 	struct sockaddr_storage	addr;
 
+	if( NET_UseWebTransport() && to.type == NA_WEBTRANSPORT )
+	{
+		NET_WT_SendPacket( length, data, to );
+		return;
+	}
+
 	if( to.type != NA_BROADCAST && to.type != NA_IP && to.type != NA_IP6 && to.type != NA_MULTICAST6)
 	{
 		Com_Error( ERR_FATAL, "Sys_SendPacket: bad address type" );
@@ -716,6 +743,9 @@ qboolean Sys_IsLANAddress( netadr_t adr ) {
 	int		index, run, addrsize;
 	qboolean differed;
 	byte *compareadr, *comparemask, *compareip;
+
+	if( adr.type == NA_WEBTRANSPORT )
+		return NET_WT_IsLANAddress( adr );
 
 	if( adr.type == NA_LOOPBACK ) {
 		return qtrue;
@@ -1486,6 +1516,7 @@ static qboolean NET_GetCvars( void ) {
 	net_socksPassword->modified = qfalse;
 
 	net_dropsim = Cvar_Get("net_dropsim", "", CVAR_TEMP);
+	modified += NET_WT_GetCvars();
 
 	return modified ? qtrue : qfalse;
 }
@@ -1536,6 +1567,8 @@ void NET_Config( qboolean enableNetworking ) {
 	}
 
 	if( stop ) {
+		NET_WT_Config( qfalse );
+
 		if ( ip_socket != INVALID_SOCKET ) {
 			closesocket( ip_socket );
 			ip_socket = INVALID_SOCKET;
@@ -1563,7 +1596,11 @@ void NET_Config( qboolean enableNetworking ) {
 
 	if( start )
 	{
-		if (net_enabled->integer)
+		if( NET_UseWebTransport() )
+		{
+			NET_WT_Config( qtrue );
+		}
+		else if (net_enabled->integer)
 		{
 			NET_OpenIP();
 			NET_SetMulticast6();
@@ -1665,6 +1702,12 @@ void NET_Sleep(int msec)
 	fd_set fdr;
 	int retval;
 	SOCKET highestfd = INVALID_SOCKET;
+
+	if( NET_UseWebTransport() )
+	{
+		NET_Event( NULL );
+		return;
+	}
 
 	if(msec < 0)
 		msec = 0;

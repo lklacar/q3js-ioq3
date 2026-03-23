@@ -1,0 +1,8 @@
+{
+  "private": true,
+  "dependencies": {
+    "@fails-components/webtransport": "^1.4.4",
+    "@fails-components/webtransport-transport-http3-quiche": "^1.4.4",
+    "ws": "^8.20.0"
+  }
+}

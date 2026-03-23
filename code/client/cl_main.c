@@ -3935,6 +3935,7 @@ void CL_ServerInfoPacket( netadr_t from, msg_t *msg ) {
 			{
 				case NA_BROADCAST:
 				case NA_IP:
+				case NA_WEBTRANSPORT:
 					type = 1;
 					break;
 				case NA_IP6:

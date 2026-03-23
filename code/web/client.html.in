@@ -29,12 +29,17 @@ const fs_basegame = urlParams.get('fs_basegame') || '';
 const fs_game = urlParams.get('fs_game') || '';
 let generatedArguments = `
     +set sv_pure 0
-    +set net_enabled 0
+    +set net_enabled 1
+    +set net_transport webtransport
     +set r_mode -2
     +set com_basegame "${com_basegame}"
     +set fs_basegame "${fs_basegame}"
     +set fs_game "${fs_game}"
 `;
+const wtPath = urlParams.get('wt_path');
+if (wtPath) generatedArguments += ` +set cl_wt_path "${wtPath}" `;
+const wtCertHash = urlParams.get('wt_cert_hash');
+if (wtCertHash) generatedArguments += ` +set cl_wt_cert_hash "${wtCertHash}" `;
 // Note that unfortunately "+" needs to be encoded as "%2b" in URL query strings or it will be stripped by the browser.
 const queryArgs = urlParams.get('args');
 if (queryArgs) generatedArguments += ` ${queryArgs} `;

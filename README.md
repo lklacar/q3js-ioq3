@@ -152,9 +152,22 @@ For Emscripten,
      see https://developer.chrome.com/blog/wasm-debugging-2020
 
 The dedicated server can also be built with Emscripten. The `ioq3ded` target
-is emitted as a Node.js JavaScript + WebAssembly pair and uses Emscripten's
-WebSocket-backed socket layer by default. At runtime Node must be able to
-resolve the `ws` package.
+is emitted as a Node.js JavaScript + WebAssembly pair and uses the project
+WebTransport backend by default. At runtime Node must be able to resolve
+`@fails-components/webtransport`, `@fails-components/webtransport-transport-http3-quiche`,
+and `ws`.
+
+The WebTransport server certificate must use a non-RSA key. The bundled Node
+QUIC/WebTransport stack follows Chromium policy and rejects RSA certificates,
+so use ECDSA, for example `prime256v1`. A working self-signed test certificate
+for localhost and `188.2.244.171` can be generated with:
+
+```
+openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -sha256 -nodes -days 7 \
+  -subj '/CN=188.2.244.171' \
+  -addext 'subjectAltName=DNS:localhost,IP:127.0.0.1,IP:188.2.244.171' \
+  -keyout /tmp/ioq3-wt-key.pem -out /tmp/ioq3-wt-cert.pem
+```
 
 Installation, for *nix
   1. Set the CMAKE_INSTALL_PREFIX to your prefered installation directory.
@@ -643,4 +656,3 @@ Significant contributions from
   * optical <alex@rigbo.se>
   * Aaron Gyes <floam@aaron.gy>
   * surrealchemist
-

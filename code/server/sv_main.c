@@ -382,6 +382,7 @@ static long SVC_HashForAddress( netadr_t address ) {
 	switch ( address.type ) {
 		case NA_IP:  ip = address.ip;  size = 4; break;
 		case NA_IP6: ip = address.ip6; size = 16; break;
+		case NA_WEBTRANSPORT: ip = address.ip; size = 4; break;
 		default: break;
 	}
 
@@ -422,6 +423,12 @@ static leakyBucket_t *SVC_BucketForAddress( netadr_t address, int burst, int per
 				}
 				break;
 
+			case NA_WEBTRANSPORT:
+				if ( memcmp( bucket->ipv._4, address.ip, 4 ) == 0 ) {
+					return bucket;
+				}
+				break;
+
 			default:
 				break;
 		}
@@ -454,6 +461,7 @@ static leakyBucket_t *SVC_BucketForAddress( netadr_t address, int burst, int per
 			switch ( address.type ) {
 				case NA_IP:  Com_Memcpy( bucket->ipv._4, address.ip, 4 );   break;
 				case NA_IP6: Com_Memcpy( bucket->ipv._6, address.ip6, 16 ); break;
+				case NA_WEBTRANSPORT: Com_Memcpy( bucket->ipv._4, address.ip, 4 ); break;
 				default: break;
 			}
 

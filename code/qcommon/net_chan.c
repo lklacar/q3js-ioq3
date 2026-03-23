@@ -22,6 +22,7 @@ Foundation, Inc., 51 Franklin St, Fifth Floor, Boston, MA  02110-1301  USA
 
 #include "q_shared.h"
 #include "qcommon.h"
+#include "net_wt.h"
 
 /*
 
@@ -48,6 +49,7 @@ to the new value before sending out any replies.
 
 
 #define	MAX_PACKETLEN			1400		// max size of a network packet
+#define	WT_MAX_PACKETLEN		1200		// stay within common QUIC datagram limits
 
 #define	FRAGMENT_SIZE			(MAX_PACKETLEN - 100)
 #define	PACKET_HEADER			10			// two ints and a short
@@ -62,6 +64,19 @@ static char *netsrcString[2] = {
 	"client",
 	"server"
 };
+
+static int Netchan_MaxPacketLen( void )
+{
+	if( NET_UseWebTransport() )
+		return WT_MAX_PACKETLEN;
+
+	return MAX_PACKETLEN;
+}
+
+static int Netchan_FragmentSize( void )
+{
+	return Netchan_MaxPacketLen() - 100;
+}
 
 /*
 ===============
@@ -110,6 +125,7 @@ void Netchan_TransmitNextFragment( netchan_t *chan ) {
 	msg_t		send;
 	byte		send_buf[MAX_PACKETLEN];
 	int			fragmentLength;
+	int			fragmentSize;
 	int			outgoingSequence;
 
 	// write the packet header
@@ -129,7 +145,8 @@ void Netchan_TransmitNextFragment( netchan_t *chan ) {
 		MSG_WriteLong(&send, NETCHAN_GENCHECKSUM(chan->challenge, chan->outgoingSequence));
 
 	// copy the reliable message to the packet first
-	fragmentLength = FRAGMENT_SIZE;
+	fragmentSize = Netchan_FragmentSize();
+	fragmentLength = fragmentSize;
 	if ( chan->unsentFragmentStart  + fragmentLength > chan->unsentLength ) {
 		fragmentLength = chan->unsentLength - chan->unsentFragmentStart;
 	}
@@ -159,7 +176,7 @@ void Netchan_TransmitNextFragment( netchan_t *chan ) {
 	// that is exactly the fragment length still needs to send
 	// a second packet of zero length so that the other side
 	// can tell there aren't more to follow
-	if ( chan->unsentFragmentStart == chan->unsentLength && fragmentLength != FRAGMENT_SIZE ) {
+	if ( chan->unsentFragmentStart == chan->unsentLength && fragmentLength != fragmentSize ) {
 		chan->outgoingSequence++;
 		chan->unsentFragments = qfalse;
 	}
@@ -177,14 +194,16 @@ A 0 length will still generate a packet.
 void Netchan_Transmit( netchan_t *chan, int length, const byte *data ) {
 	msg_t		send;
 	byte		send_buf[MAX_PACKETLEN];
+	int			fragmentSize;
 
 	if ( length > MAX_MSGLEN ) {
 		Com_Error( ERR_DROP, "Netchan_Transmit: length = %i", length );
 	}
 	chan->unsentFragmentStart = 0;
+	fragmentSize = Netchan_FragmentSize();
 
 	// fragment large reliable messages
-	if ( length >= FRAGMENT_SIZE ) {
+	if ( length >= fragmentSize ) {
 		chan->unsentFragments = qtrue;
 		chan->unsentLength = length;
 		Com_Memcpy( chan->unsentBuffer, data, length );
@@ -244,6 +263,7 @@ copied out.
 qboolean Netchan_Process( netchan_t *chan, msg_t *msg ) {
 	int			sequence;
 	int			fragmentStart, fragmentLength;
+	int			fragmentSize;
 	qboolean	fragmented;
 
 	// XOR unscramble all data in the packet after the header
@@ -252,6 +272,7 @@ qboolean Netchan_Process( netchan_t *chan, msg_t *msg ) {
 	// get sequence numbers		
 	MSG_BeginReadingOOB( msg );
 	sequence = MSG_ReadLong( msg );
+	fragmentSize = Netchan_FragmentSize();
 
 	// check for fragment information
 	if ( sequence & FRAGMENT_BIT ) {
@@ -370,7 +391,7 @@ qboolean Netchan_Process( netchan_t *chan, msg_t *msg ) {
 		chan->fragmentLength += fragmentLength;
 
 		// if this wasn't the last fragment, don't process anything
-		if ( fragmentLength == FRAGMENT_SIZE ) {
+		if ( fragmentLength == fragmentSize ) {
 			return qfalse;
 		}
 
@@ -631,7 +652,7 @@ int NET_StringToAdr( const char *s, netadr_t *a, netadrtype_t family )
 	char	base[MAX_STRING_CHARS], *search;
 	char	*port = NULL;
 
-	if (!strcmp (s, "localhost")) {
+	if (!strcmp (s, "localhost") && !NET_WT_ShouldUseLiteralAddress( s, family )) {
 		Com_Memset (a, 0, sizeof(*a));
 		a->type = NA_LOOPBACK;
 // as NA_LOOPBACK doesn't require ports report port was given.

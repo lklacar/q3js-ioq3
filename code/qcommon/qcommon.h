@@ -139,6 +139,7 @@ typedef enum {
 	NA_BROADCAST,
 	NA_IP,
 	NA_IP6,
+	NA_WEBTRANSPORT,
 	NA_MULTICAST6,
 	NA_UNSPEC
 } netadrtype_t;

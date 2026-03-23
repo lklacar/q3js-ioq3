@@ -29,16 +29,18 @@ list(APPEND CLIENT_LINK_OPTIONS
     -sEXIT_RUNTIME=1
     -sEXPORT_ES6
     -sEXPORT_NAME=${CLIENT_NAME}
+    SHELL:--pre-js ${SOURCE_DIR}/web/webtransport-pre.js
 )
 
 list(APPEND SERVER_LINK_OPTIONS
     -sTOTAL_MEMORY=256MB
+    -sALLOW_MEMORY_GROWTH=1
     -sSTACK_SIZE=5242880
     -sEXIT_RUNTIME=1
     -sENVIRONMENT=node
     -sNODERAWFS=1
     -sWEBSOCKET_SUBPROTOCOL=binary
-    --pre-js ${SOURCE_DIR}/web/server-node-pre.js
+    SHELL:--pre-js ${SOURCE_DIR}/web/webtransport-pre.js --pre-js ${SOURCE_DIR}/web/server-node-pre.js
 )
 
 option(EMSCRIPTEN_PRELOAD_FILE "Preload game files into .data file" OFF)
@@ -55,6 +57,9 @@ list(APPEND POST_CONFIGURE_FUNCTIONS deploy_shell_files)
 function(deploy_shell_files)
     configure_file(${SOURCE_DIR}/web/client.html.in
         ${CMAKE_BINARY_DIR}/${CMAKE_BUILD_TYPE}/${CLIENT_NAME}.html @ONLY)
+
+    configure_file(${SOURCE_DIR}/web/package.json.in
+        ${CMAKE_BINARY_DIR}/package.json @ONLY)
 
     if(NOT EMSCRIPTEN_PRELOAD_FILE)
         configure_file(${SOURCE_DIR}/web/client-config.json
