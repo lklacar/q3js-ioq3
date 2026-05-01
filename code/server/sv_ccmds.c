@@ -37,8 +37,10 @@ These commands can only be entered from stdin or by a remote operator datagram
 
 static cvar_t *sv_killpost_url;
 static cvar_t *sv_killpost_debug;
+static cvar_t *sv_killpost_client_secret;
 static int sv_killpost_lastErrorPrintTime;
 #define SV_KILLPOST_DEFAULT_URL "https://master.q3js.com/api/events"
+#define SV_KILLPOST_CLIENT_SECRET_HEADER "X-Q3JS-Client-Secret"
 #define SV_KILLPOST_MAX_PENDING 128
 #ifdef USE_SERVER_CURL
 static qboolean sv_killpost_curlInitAttempted;
@@ -63,6 +65,9 @@ static void SV_KillPostInitCvars( void ) {
 	}
 	if ( !sv_killpost_debug ) {
 		sv_killpost_debug = Cvar_Get( "sv_killpost_debug", "0", CVAR_ARCHIVE );
+	}
+	if ( !sv_killpost_client_secret ) {
+		sv_killpost_client_secret = Cvar_Get( "sv_killpost_client_secret", "", 0 );
 	}
 
 	/*
@@ -266,6 +271,7 @@ static qboolean SV_KillPostEnqueue( const char *url, const char *body ) {
 static void SV_KillPostStartNextRequest( void ) {
 	svKillPostRequest_t *request;
 	CURLMcode multiResult;
+	char clientSecretHeader[1024];
 
 	if ( sv_killpost_activeRequest || !sv_killpost_pendingHead ) {
 		return;
@@ -287,6 +293,30 @@ static void SV_KillPostStartNextRequest( void ) {
 	}
 
 	request->headers = curl_slist_append( request->headers, "Content-Type: application/json" );
+	if ( sv_killpost_client_secret && sv_killpost_client_secret->string[0] ) {
+		if ( strchr( sv_killpost_client_secret->string, '\r' ) ||
+			 strchr( sv_killpost_client_secret->string, '\n' ) ) {
+			SV_KillPostErrorf( "sv_killpost_client_secret contains invalid header characters" );
+			SV_KillPostFreeRequest( request );
+			return;
+		}
+
+		if ( strlen( sv_killpost_client_secret->string ) + strlen( SV_KILLPOST_CLIENT_SECRET_HEADER ) + 3 >=
+			 sizeof( clientSecretHeader ) ) {
+			SV_KillPostErrorf( "sv_killpost_client_secret is too long to send" );
+			SV_KillPostFreeRequest( request );
+			return;
+		}
+
+		Com_sprintf(
+			clientSecretHeader,
+			sizeof( clientSecretHeader ),
+			"%s: %s",
+			SV_KILLPOST_CLIENT_SECRET_HEADER,
+			sv_killpost_client_secret->string
+		);
+		request->headers = curl_slist_append( request->headers, clientSecretHeader );
+	}
 	curl_easy_setopt( request->curl, CURLOPT_URL, request->url );
 	curl_easy_setopt( request->curl, CURLOPT_POST, 1L );
 	curl_easy_setopt( request->curl, CURLOPT_POSTFIELDS, request->body );
